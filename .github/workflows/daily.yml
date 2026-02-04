@@ -1,0 +1,28 @@
+name: Personal Tech Scout
+
+on:
+  schedule:
+    - cron: '0 12 * * *' # 每天北京时间早上 20 点运行
+  workflow_dispatch:    # 支持手动运行
+
+jobs:
+  run_agent:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install requests notion-client
+
+      - name: Execute Agent
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+        run: python agent.py
