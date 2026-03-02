@@ -1,181 +1,191 @@
 #!/usr/bin/env python3
 """
-AkShare - 黄金数据获取 (上海黄金交易所 Au99.99 实时行情)
-带详细调试信息
+AkShare - 黄金数据获取 (适配 GitHub Actions 网络环境)
 """
 
 import os
 import sys
 import json
+import time
+import random
 import traceback
 from datetime import datetime
 
 import akshare as ak
 import pandas as pd
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 
-def get_gold_data_sge():
+# 配置 requests 重试策略（针对 GitHub Actions 网络不稳定）
+def create_session():
+    session = requests.Session()
+    retry_strategy = Retry(
+        total=3,
+        backoff_factor=1,  # 指数退避
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["HEAD", "GET", "OPTIONS"]
+    )
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    
+    # 设置更长的超时（GitHub Actions 可能需要更长时间）
+    session.timeout = 30
+    
+    # 设置国内 DNS 和 Headers 模拟国内用户
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+    })
+    
+    return session
+
+
+def get_gold_futures_realtime():
     """
-    使用akshare获取上海黄金交易所Au99.99实时行情
+    获取上期所黄金期货实时行情，带重试机制
+    """
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            print(f"🌐 尝试 {attempt + 1}/{max_retries}: 获取上期所黄金期货...")
+            
+            # 添加随机延迟，避免被识别为机器人
+            if attempt > 0:
+                sleep_time = random.uniform(2, 5)
+                print(f"   等待 {sleep_time:.1f} 秒后重试...")
+                time.sleep(sleep_time)
+            
+            # 方法1: 使用品种名称"黄金"
+            df = ak.futures_zh_realtime(symbol="黄金")
+            
+            if df is None or df.empty:
+                print("   ⚠️ 返回数据为空")
+                continue
+            
+            print(f"   ✅ 成功获取 {len(df)} 条数据")
+            
+            # 查找主力连续合约
+            main_contract = None
+            for idx, row in df.iterrows():
+                symbol = str(row.get('symbol', ''))
+                if 'AU0' in symbol or '连续' in symbol:
+                    main_contract = row
+                    print(f"   ✅ 找到主力合约: {symbol}")
+                    break
+            
+            # 如果没找到连续合约，找成交量最大的
+            if main_contract is None:
+                df_sorted = df.sort_values('volume', ascending=False)
+                main_contract = df_sorted.iloc[0]
+                print(f"   ⚠️ 使用成交量最大合约: {main_contract.get('symbol')}")
+            
+            # 解析数据
+            data = {
+                'name': str(main_contract.get('name', '沪金')),
+                'symbol': str(main_contract.get('symbol', '')),
+                '最新价': float(main_contract.get('trade', 0)) if pd.notna(main_contract.get('trade')) else 0,
+                '开盘价': float(main_contract.get('open', 0)) if pd.notna(main_contract.get('open')) else 0,
+                '最高价': float(main_contract.get('high', 0)) if pd.notna(main_contract.get('high')) else 0,
+                '最低价': float(main_contract.get('low', 0)) if pd.notna(main_contract.get('low')) else 0,
+                '昨结算': float(main_contract.get('prevsettlement', 0)) if pd.notna(main_contract.get('prevsettlement')) else 0,
+                '涨跌额': float(main_contract.get('change', 0)) if pd.notna(main_contract.get('change')) else 0,
+                '涨跌幅': float(main_contract.get('changepercent', 0)) if pd.notna(main_contract.get('changepercent')) else 0,
+                '成交量': int(main_contract.get('volume', 0)) if pd.notna(main_contract.get('volume')) else 0,
+                '持仓量': int(main_contract.get('position', 0)) if pd.notna(main_contract.get('position')) else 0,
+                '买价': float(main_contract.get('bid', 0)) if pd.notna(main_contract.get('bid')) else 0,
+                '卖价': float(main_contract.get('ask', 0)) if pd.notna(main_contract.get('ask')) else 0,
+                '更新时间': str(main_contract.get('ticktime', datetime.now().strftime("%H:%M:%S"))),
+                '日期': str(main_contract.get('tradedate', datetime.now().strftime("%Y-%m-%d"))),
+            }
+            
+            # 重新计算涨跌幅
+            if data['涨跌幅'] == 0 and data['昨结算'] > 0 and data['涨跌额'] != 0:
+                data['涨跌幅'] = round((data['涨跌额'] / data['昨结算']) * 100, 2)
+            
+            if data['最新价'] > 0:
+                print(f"   ✅ 解析成功: {data['name']} @ {data['最新价']}")
+                return data
+            else:
+                print("   ⚠️ 价格无效，继续重试...")
+                
+        except Exception as e:
+            print(f"   ❌ 失败: {str(e)[:100]}")
+            if attempt == max_retries - 1:
+                print(f"   📜 错误详情: {traceback.format_exc()[:500]}")
+    
+    return None
+
+
+def get_gold_futures_daily():
+    """
+    备用方案: 使用新浪期货历史数据（更稳定，但延迟一天）
     """
     try:
-        print(f"🌐 正在获取上海黄金交易所Au99.99实时行情...")
+        print(f"\n🌐 备用方案: 获取新浪期货历史数据...")
         
-        # 获取SGE实时行情数据
-        df = ak.spot_quotations_sge(symbol="Au99.99")
-        
-        print(f"✅ 数据获取成功")
-        print(f"📊 数据类型: {type(df)}")
-        print(f"📊 数据形状: {df.shape}")
+        # 使用新浪期货接口获取主力连续合约
+        df = ak.futures_zh_daily_sina(symbol="AU0")
         
         if df is None or df.empty:
-            print("❌ 返回数据为空")
             return None
         
-        # 打印原始数据用于调试
-        print(f"\n📋 原始数据预览:")
-        print(df.head().to_string())
-        print(f"\n📋 数据列: {list(df.columns)}")
-        
-        # 获取最新一条数据(最后一行)
         latest = df.iloc[-1]
         
-        print(f"\n📋 最新数据行:")
-        print(latest)
-        
-        # 解析数据 - 根据akshare文档，列名应该是: 品种, 时间, 现价, 更新时间
         data = {
-            'name': 'Au99.99(上海金)',
-            '最新价': float(latest.get('现价', 0)) if pd.notna(latest.get('现价')) else 0,
-            '开盘价': 0,  # 实时行情接口没有开盘价，需要从历史数据获取
-            '最高价': 0,
-            '最低价': 0,
-            '昨收': 0,
-            '涨跌额': 0,  # 实时接口没有涨跌幅，需要计算
+            'name': '沪金主力(AU0)',
+            'symbol': 'AU0',
+            '最新价': float(latest.get('close', 0)),
+            '开盘价': float(latest.get('open', 0)),
+            '最高价': float(latest.get('high', 0)),
+            '最低价': float(latest.get('low', 0)),
+            '昨结算': float(latest.get('close', 0)),
+            '涨跌额': 0,
             '涨跌幅': 0,
-            '成交量': 0,  # 实时接口没有成交量
-            '持仓量': 0,
-            '买价': float(latest.get('现价', 0)) if pd.notna(latest.get('现价')) else 0,
-            '卖价': float(latest.get('现价', 0)) if pd.notna(latest.get('现价')) else 0,
-            '更新时间': f"{latest.get('更新时间', '')} {latest.get('时间', '')}",
+            '成交量': int(latest.get('volume', 0)),
+            '持仓量': int(latest.get('hold', 0)) if 'hold' in latest else 0,
+            '买价': float(latest.get('close', 0)),
+            '卖价': float(latest.get('close', 0)),
+            '更新时间': str(latest.get('date', datetime.now().strftime("%Y-%m-%d"))),
+            '日期': str(latest.get('date', datetime.now().strftime("%Y-%m-%d"))),
+            'data_source': '新浪期货(历史)',
         }
         
-        # 尝试获取历史数据来计算涨跌幅
-        try:
-            print("\n🌐 获取历史数据计算涨跌幅...")
-            hist_df = ak.spot_hist_sge(symbol='Au99.99')
-            if not hist_df.empty and len(hist_df) >= 2:
-                # 获取昨日收盘价
-                yesterday_close = float(hist_df.iloc[-1]['close'])
-                data['昨收'] = yesterday_close
-                data['开盘价'] = float(hist_df.iloc[-1]['open'])
-                data['最高价'] = float(hist_df.iloc[-1]['high'])
-                data['最低价'] = float(hist_df.iloc[-1]['low'])
-                
-                # 计算涨跌
-                if yesterday_close > 0:
-                    data['涨跌额'] = round(data['最新价'] - yesterday_close, 2)
-                    data['涨跌幅'] = round((data['涨跌额'] / yesterday_close) * 100, 2)
-                
-                print(f"✅ 历史数据获取成功，昨收: {yesterday_close}")
-        except Exception as e:
-            print(f"⚠️ 获取历史数据失败: {e}")
+        # 计算涨跌
+        if len(df) >= 2:
+            prev_close = float(df.iloc[-2]['close'])
+            data['昨结算'] = prev_close
+            data['涨跌额'] = round(data['最新价'] - prev_close, 2)
+            data['涨跌幅'] = round((data['涨跌额'] / prev_close) * 100, 2) if prev_close > 0 else 0
         
-        print(f"\n✅ 解析成功:")
-        print(f"   名称: {data['name']}")
-        print(f"   最新价: {data['最新价']}")
-        print(f"   涨跌额: {data['涨跌额']}")
-        print(f"   涨跌幅: {data['涨跌幅']}%")
-        print(f"   更新时间: {data['更新时间']}")
-        
+        print(f"   ✅ 历史数据获取成功: {data['最新价']}")
         return data
         
     except Exception as e:
-        print(f"❌ 异常: {e}")
-        print(f"📜 堆栈: {traceback.format_exc()}")
-        return None
-
-
-def get_gold_futures_data():
-    """
-    备用方案: 使用上期所黄金期货主力合约
-    """
-    try:
-        print(f"🌐 尝试获取上期所黄金期货主力合约...")
-        
-        # 获取期货实时行情
-        df = ak.futures_zh_realtime(symbol="沪金")
-        
-        print(f"✅ 期货数据获取成功")
-        print(f"📊 数据形状: {df.shape}")
-        print(f"\n📋 数据列: {list(df.columns)}")
-        print(f"\n📋 原始数据:")
-        print(df.to_string())
-        
-        if df is None or df.empty:
-            return None
-        
-        # 获取主力合约(通常是第一行，连续合约)
-        # 筛选出连续合约(合约代码通常包含"0")
-        main_contract = df[df['symbol'].str.contains('0', na=False)]
-        
-        if main_contract.empty:
-            main_contract = df  # 如果没有连续合约，取全部
-            
-        row = main_contract.iloc[0]
-        
-        print(f"\n📋 使用合约数据:")
-        print(row)
-        
-        # 解析期货数据
-        data = {
-            'name': str(row.get('name', '沪金主力')),
-            '最新价': float(row.get('trade', 0)) if pd.notna(row.get('trade')) else 0,
-            '开盘价': float(row.get('open', 0)) if pd.notna(row.get('open')) else 0,
-            '最高价': float(row.get('high', 0)) if pd.notna(row.get('high')) else 0,
-            '最低价': float(row.get('low', 0)) if pd.notna(row.get('low')) else 0,
-            '昨收': float(row.get('prevsettlement', 0)) if pd.notna(row.get('prevsettlement')) else 0,
-            '昨结算': float(row.get('prevsettlement', 0)) if pd.notna(row.get('prevsettlement')) else 0,
-            '涨跌额': float(row.get('change', 0)) if pd.notna(row.get('change')) else 0,
-            '涨跌幅': float(row.get('changepercent', 0)) * 100 if pd.notna(row.get('changepercent')) else 0,
-            '成交量': int(row.get('volume', 0)) if pd.notna(row.get('volume')) else 0,
-            '持仓量': int(row.get('position', 0)) if pd.notna(row.get('position')) else 0,
-            '买价': float(row.get('bid', 0)) if pd.notna(row.get('bid')) else 0,
-            '卖价': float(row.get('ask', 0)) if pd.notna(row.get('ask')) else 0,
-            '更新时间': str(row.get('time', datetime.now().strftime("%H:%M:%S"))),
-        }
-        
-        # 如果涨跌幅是0但涨跌额和昨结算都有值，重新计算
-        if data['涨跌幅'] == 0 and data['昨结算'] > 0 and data['涨跌额'] != 0:
-            data['涨跌幅'] = round((data['涨跌额'] / data['昨结算']) * 100, 2)
-        
-        print(f"\n✅ 期货数据解析成功:")
-        print(f"   名称: {data['name']}")
-        print(f"   最新价: {data['最新价']}")
-        print(f"   涨跌额: {data['涨跌额']}")
-        print(f"   涨跌幅: {data['涨跌幅']}%")
-        
-        return data
-        
-    except Exception as e:
-        print(f"❌ 期货数据获取失败: {e}")
-        print(f"📜 堆栈: {traceback.format_exc()}")
+        print(f"   ❌ 备用方案失败: {e}")
         return None
 
 
 def get_gold_data():
     """
-    主函数: 获取黄金数据，优先使用SGE现货，失败则使用期货
+    主函数: 带完整降级策略
     """
-    # 首先尝试获取SGE现货数据
-    data = get_gold_data_sge()
+    # 方案1: 实时行情（可能因网络问题失败）
+    data = get_gold_futures_realtime()
     
-    # 如果现货数据获取失败或价格无效，使用期货数据
+    # 方案2: 历史数据（更稳定）
     if not data or data.get('最新价', 0) == 0:
-        print("\n⚠️ 现货数据无效，切换到期货数据...")
-        data = get_gold_futures_data()
+        print("\n⚠️ 实时行情失败，切换到历史数据...")
+        data = get_gold_futures_daily()
     
+    # 方案3: 使用静态数据或缓存（最后手段）
+    if not data:
+        print("\n❌ 所有数据源均失败")
+        # 可以在这里添加从缓存文件读取的逻辑
+        
     return data
 
 
@@ -186,15 +196,10 @@ def send_to_feishu(data):
     webhook_url = os.environ.get("FEISHU_WEBHOOK_URL")
     
     print(f"\n📤 准备发送飞书...")
-    print(f"   Webhook存在: {'是' if webhook_url else '否'}")
     
     if not webhook_url:
         print("❌ 错误: 未设置 FEISHU_WEBHOOK_URL 环境变量")
         return False
-    
-    # 隐藏部分URL用于安全显示
-    safe_url = webhook_url[:50] + "..." if len(webhook_url) > 50 else webhook_url
-    print(f"   URL: {safe_url}")
     
     try:
         change = data.get('涨跌额', 0)
@@ -202,9 +207,11 @@ def send_to_feishu(data):
         color = "green" if change >= 0 else "red"
         sign = "+" if change >= 0 else ""
         
-        # 根据数据来源决定单位
-        unit = "元/克" if "SGE" in data.get('name', '') or "Au99.99" in data.get('name', '') else "元/千克"
-        volume_unit = "手" if "期货" in data.get('name', '') or "主力" in data.get('name', '') else "千克"
+        # 判断数据来源
+        is_realtime = 'ticktime' in str(data.get('更新时间', ''))
+        data_source = "实时" if is_realtime else data.get('data_source', '历史')
+        
+        unit = "元/克"
         
         card_message = {
             "msg_type": "interactive",
@@ -213,7 +220,7 @@ def send_to_feishu(data):
                 "header": {
                     "title": {
                         "tag": "plain_text",
-                        "content": f"{trend} {data.get('name', '黄金')} 行情"
+                        "content": f"{trend} {data.get('name', '沪金')} 行情 ({data_source})"
                     },
                     "template": color
                 },
@@ -242,7 +249,7 @@ def send_to_feishu(data):
                                 "is_short": True,
                                 "text": {
                                     "tag": "lark_md",
-                                    "content": f"**昨结算/昨收**\n{data.get('昨结算', data.get('昨收', '--'))}"
+                                    "content": f"**昨结算**\n{data.get('昨结算', '--')}"
                                 }
                             },
                             {
@@ -268,7 +275,7 @@ def send_to_feishu(data):
                                 "is_short": True,
                                 "text": {
                                     "tag": "lark_md",
-                                    "content": f"**成交量**\n{data.get('成交量', '--'):,} {volume_unit}"
+                                    "content": f"**成交量**\n{data.get('成交量', '--'):,} 手"
                                 }
                             },
                             {
@@ -288,8 +295,9 @@ def send_to_feishu(data):
                         "elements": [
                             {
                                 "tag": "plain_text",
-                                "content": f"📌 数据来源: AkShare(akshare.xyz)\n"
-                                          f"⚠️ 数据延迟仅供参考，投资有风险"
+                                "content": f"📌 数据来源: AkShare\n"
+                                          f"🔧 运行环境: {'GitHub Actions' if os.environ.get('GITHUB_ACTIONS') else '本地'}\n"
+                                          f"⚠️ 仅供参考，投资有风险"
                             }
                         ]
                     }
@@ -297,16 +305,12 @@ def send_to_feishu(data):
             }
         }
         
-        print(f"   发送请求...")
         response = requests.post(
             webhook_url,
             headers={"Content-Type": "application/json"},
             json=card_message,
             timeout=10
         )
-        
-        print(f"   状态码: {response.status_code}")
-        print(f"   返回: {response.text[:200]}")
         
         result = response.json()
         
@@ -319,15 +323,15 @@ def send_to_feishu(data):
             
     except Exception as e:
         print(f"❌ 发送异常: {e}")
-        print(f"📜 堆栈: {traceback.format_exc()}")
         return False
 
 
 def main():
     print("=" * 60)
-    print("🚀 AkShare 黄金数据获取 - 调试模式")
+    print("🚀 AkShare 黄金数据获取 - GitHub Actions 适配版")
     print(f"⏰ {datetime.now()}")
     print(f"🐍 Python: {sys.version}")
+    print(f"🔧 环境: {'GitHub Actions' if os.environ.get('GITHUB_ACTIONS') else '本地'}")
     print("=" * 60)
     
     # 获取数据
