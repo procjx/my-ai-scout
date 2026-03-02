@@ -193,42 +193,10 @@ def send_wechat(data):
     发送到企业微信机器人
     文档: https://developer.work.weixin.qq.com/document/path/91770
     """
-    def get_market_status():
-        """
-        判断当前市场状态
-        """
-        beijing_now = get_beijing_time()
-        current_time = beijing_now.time()
-        current_hour = current_time.hour
-        current_minute = current_time.minute
-        
-        # 判断是否在交易时间
-        is_trading = False
-        status = "已收盘"
-        
-        # 工作日判断（简化版，实际应排除节假日）
-        weekday = beijing_now.weekday()
-        if weekday < 5:  # 周一到周五
-            # 上午盘 9:00-11:30
-            if (9 <= current_hour < 11) or (current_hour == 11 and current_minute <= 30):
-                is_trading = True
-                status = "交易中(上午盘)"
-            # 下午盘 13:30-15:00
-            elif (13 <= current_hour < 15) or (current_hour == 15 and current_minute == 0):
-                is_trading = True
-                status = "交易中(下午盘)" if current_hour < 15 else "收盘"
-            # 夜盘 21:00-02:30
-            elif current_hour >= 21 or current_hour < 2 or (current_hour == 2 and current_minute <= 30):
-                is_trading = True
-                status = "交易中(夜盘)"
-        
-        return is_trading, status, beijing_now
-        
     def _build_message_content(data):
         """
         构建通用的消息内容
         """
-        is_trading, market_status, _ = get_market_status()
         
         change = data.get('涨跌额', 0)
         trend = "📈" if change >= 0 else "📉"
@@ -238,8 +206,6 @@ def send_wechat(data):
         source_tag = "🔴 实时" if is_realtime else "🟡 收盘"
         
         update_time_str = data.get('完整时间', data.get('更新时间', '--'))
-        if not is_trading and "15:00" in str(update_time_str):
-            update_time_str = f"{update_time_str} (已收盘)"
         
         content = {
             'title': f"{trend} {data.get('name', '沪金')} {source_tag}",
@@ -255,8 +221,8 @@ def send_wechat(data):
             'source': data.get('数据来源', 'AkShare'),
         }
         
-        return content, trend, sign, is_trading
-        
+        return content, trend, sign
+
     print("\n📤 发送到企业微信...")
     
     webhook_url = os.environ.get("WECHAT_WEBHOOK_URL")
@@ -265,7 +231,7 @@ def send_wechat(data):
         return False
     
     try:
-        content, trend, sign, is_trading = _build_message_content(data)
+        content, trend, sign = _build_message_content(data)
         change = data.get('涨跌额', 0)
         
         # 企业微信支持多种消息类型：text, markdown, image, news等
