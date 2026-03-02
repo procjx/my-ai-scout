@@ -212,7 +212,6 @@ def send_wechat(data):
             'price': f"{data.get('最新价', '--')} 元/克",
             'change': f"{sign}{data.get('涨跌额', '--')} ({sign}{data.get('涨跌幅', '--')}%)",
             'time': update_time_str,
-            'market_status': market_status,
             'open': data.get('开盘价', '--'),
             'high': data.get('最高价', '--'),
             'low': data.get('最低价', '--'),
@@ -242,7 +241,6 @@ def send_wechat(data):
 > 💰 **最新价格**: {content['price']}
 > 📈 **涨跌**: {content['change']}
 > 🕐 **时间**: {content['time']}
-> 📊 **市场状态**: {content['market_status']}
 
 **详细数据**:
 - 开盘价: {content['open']}
