@@ -1,119 +1,173 @@
 #!/usr/bin/env python3
 """
-黄金指数监控 - 获取新浪财经指数点位（非价格）
+新浪期货 - 沪金主连(AU0) 完整数据抓取
+URL: https://finance.sina.com.cn/futures/quotes/AU0.shtml
 """
 
 import os
+import re
 import requests
 from datetime import datetime
 
 
-def get_gold_index():
+def get_sina_futures_au0():
     """
-    获取新浪财经黄金指数（非实际价格）
-    指数基准：2019年12月31日 = 1000点
+    从新浪财经期货页面抓取沪金主连完整数据
     """
-    try:
-        # 沪金主连指数
-        url = "https://hq.sinajs.cn/list=AU0"
-        headers = {
-            "Referer": "https://finance.sina.com.cn",
-            "User-Agent": "Mozilla/5.0"
-        }
-        
-        response = requests.get(url, headers=headers, timeout=10)
-        response.encoding = 'gb2312'
-        
-        data_str = response.text.split('"')[1]
-        parts = data_str.split(',')
-        
-        # 新浪返回的字段中，第3个字段（索引3）在页面上显示为指数
-        # 但实际API返回的是元/克价格，我们需要计算指数
-        # 或者使用新浪的指数API
-        
-        # 方法1：通过新浪行情页面抓取指数（推荐）
-        index_url = "https://stock.finance.sina.com.cn/futures/api/json.php/Cffex_FuturesService.getCffexFuturesDailyKLine?symbol=AU0"
-        idx_response = requests.get(index_url, headers=headers, timeout=10)
-        idx_data = idx_response.json()
-        
-        if idx_data and len(idx_data) > 0:
-            latest = idx_data[-1]  # 最新数据
-            index_point = float(latest.get("close", 0))
-            
-            # 计算涨跌
-            prev = idx_data[-2] if len(idx_data) > 1 else latest
-            prev_close = float(prev.get("close", index_point))
-            change = index_point - prev_close
-            change_percent = (change / prev_close) * 100 if prev_close > 0 else 0
-            
-            return {
-                "index": round(index_point, 3),      # 1187.180
-                "change": round(change, 3),
-                "change_percent": round(change_percent, 2),
-                "open": float(latest.get("open", 0)),
-                "high": float(latest.get("high", 0)),
-                "low": float(latest.get("low", 0)),
-                "unit": "点",
-                "base": "1000点（2019-12-31基准）",
-                "note": "这是指数点位，不是元/克价格"
-            }
-            
-    except Exception as e:
-        print(f"方法1失败: {e}")
+    url = "https://finance.sina.com.cn/futures/quotes/AU0.shtml"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    }
     
-    # 方法2：备用 - 直接计算指数（如果知道基准）
     try:
-        url = "https://hq.sinajs.cn/list=AU0"
-        headers = {"Referer": "https://finance.sina.com.cn"}
-        response = requests.get(url, headers=headers, timeout=10)
-        response.encoding = 'gb2312'
+        response = requests.get(url, headers=headers, timeout=15)
+        response.encoding = 'utf-8'
+        html = response.text
         
-        data_str = response.text.split('"')[1]
-        parts = data_str.split(',')
+        data = {}
         
-        # 当前金价（元/克）
-        current_price = float(parts[3])
-        # 基准金价（约380元/克，2019年底）
-        base_price = 380.0
+        # 1. 抓取顶部大数字（当前指数、涨跌、涨跌幅）
+        # 格式: 1187.180 +42.220 +3.69%
+        top_pattern = r'<div[^>]*class=["\']price["\'][^>]*>.*?([\d\.]+).*?([\+\-][\d\.]+).*?([\+\-][\d\.]+%)'
+        top_match = re.search(top_pattern, html, re.DOTALL)
+        if top_match:
+            data['current_index'] = top_match.group(1)      # 1187.180
+            data['change'] = top_match.group(2)              # +42.220
+            data['change_percent'] = top_match.group(3)      # +3.69%
+        else:
+            # 备用：直接查找大数字
+            big_num = re.search(r'>(\d{4}\.\d{3})<', html)
+            if big_num:
+                data['current_index'] = big_num.group(1)
         
-        # 计算指数
-        index_point = (current_price / base_price) * 1000
+        # 2. 抓取时间
+        time_pattern = r'(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})'
+        time_match = re.search(time_pattern, html)
+        if time_match:
+            data['update_time'] = time_match.group(1)        # 2026-03-02 11:30:00
         
-        return {
-            "index": round(index_point, 3),
-            "current_price": current_price,
-            "base_price": base_price,
-            "unit": "点（估算）",
-            "base": "1000点（2019-12-31基准，估算）",
-            "note": "基于2019年底金价380元/克估算"
+        # 3. 抓取表格数据（最新价、开盘价、最高价等）
+        # 方法：查找所有包含"最新价"、"开盘价"等的标签
+        patterns = {
+            '最新价': r'最新价[：:]?\s*<[^>]*>\s*([\d\.]+)',
+            '开盘价': r'开盘价[：:]?\s*<[^>]*>\s*([\d\.]+)',
+            '最高价': r'最高价[：:]?\s*<[^>]*>\s*([\d\.]+)',
+            '最低价': r'最低价[：:]?\s*<[^>]*>\s*([\d\.]+)',
+            '结算价': r'结算价[：:]?\s*<[^>]*>\s*([\d\.]+)',
+            '昨结算': r'昨结算[：:]?\s*<[^>]*>\s*([\d\.]+)',
+            '持仓量': r'持仓量[：:]?\s*<[^>]*>\s*([\d,]+)',
+            '成交量': r'成交量[：:]?\s*<[^>]*>\s*([\d,]+)',
+            '买价': r'买\s*价[：:]?\s*<[^>]*>\s*([\d\.]+)',
+            '卖价': r'卖\s*价[：:]?\s*<[^>]*>\s*([\d\.]+)',
+            '买量': r'买\s*量[：:]?\s*<[^>]*>\s*(\d+)',
+            '卖量': r'卖\s*量[：:]?\s*<[^>]*>\s*(\d+)',
         }
         
+        for key, pattern in patterns.items():
+            match = re.search(pattern, html)
+            if match:
+                # 移除逗号（持仓量、成交量可能有逗号）
+                value = match.group(1).replace(',', '')
+                data[key] = value
+        
+        # 4. 抓取合约信息
+        contract_pattern = r'(AU\d{4})'  # 如 AU2504
+        contract_match = re.search(contract_pattern, html)
+        if contract_match:
+            data['contract'] = contract_match.group(1)
+        
+        # 5. 抓取交易所
+        exchange_pattern = r'(上海期货交易所|上期所)'
+        exchange_match = re.search(exchange_pattern, html)
+        if exchange_match:
+            data['exchange'] = exchange_match.group(1)
+        
+        # 6. 抓取美元/盎司价格（如果有）
+        usd_pattern = r'黄金\(美元/盎司\)[^\d]*(\d+\.\d+)'
+        usd_match = re.search(usd_pattern, html)
+        if usd_match:
+            data['usd_per_ounce'] = usd_match.group(1)
+        
+        return data
+        
     except Exception as e:
-        print(f"方法2也失败: {e}")
+        print(f"抓取失败: {e}")
         return None
 
 
-def send_index_to_feishu(data):
+def format_data(data):
     """
-    发送指数到飞书
+    格式化数据用于显示
+    """
+    if not data:
+        return "无数据"
+    
+    lines = []
+    lines.append("=" * 50)
+    lines.append("📊 沪金主连(AU0) 行情数据")
+    lines.append("=" * 50)
+    
+    # 主要价格
+    lines.append(f"\n💰 指数点位: {data.get('current_index', '--')} 点")
+    lines.append(f"📈 涨跌: {data.get('change', '--')} ({data.get('change_percent', '--')})")
+    lines.append(f"🕐 更新时间: {data.get('update_time', '--')}")
+    
+    # 详细数据
+    lines.append(f"\n📋 详细行情:")
+    lines.append(f"  最新价: {data.get('最新价', '--')}")
+    lines.append(f"  开盘价: {data.get('开盘价', '--')}")
+    lines.append(f"  最高价: {data.get('最高价', '--')}")
+    lines.append(f"  最低价: {data.get('最低价', '--')}")
+    lines.append(f"  昨结算: {data.get('昨结算', '--')}")
+    
+    # 交易数据
+    lines.append(f"\n📊 交易数据:")
+    lines.append(f"  成交量: {data.get('成交量', '--')} 手")
+    lines.append(f"  持仓量: {data.get('持仓量', '--')} 手")
+    
+    # 买卖盘
+    lines.append(f"\n💹 买卖盘:")
+    lines.append(f"  买价: {data.get('买价', '--')}  买量: {data.get('买量', '--')}")
+    lines.append(f"  卖价: {data.get('卖价', '--')}  卖量: {data.get('卖量', '--')}")
+    
+    # 其他
+    if 'usd_per_ounce' in data:
+        lines.append(f"\n🌍 国际金价: {data['usd_per_ounce']} 美元/盎司")
+    
+    lines.append("=" * 50)
+    
+    return "\n".join(lines)
+
+
+def send_to_feishu(data):
+    """
+    发送完整数据到飞书
     """
     webhook_url = os.environ.get("FEISHU_WEBHOOK_URL")
     if not webhook_url:
         print("错误: 未设置 FEISHU_WEBHOOK_URL")
         return False
     
-    trend = "📈" if data.get("change", 0) >= 0 else "📉"
-    color = "green" if data.get("change", 0) >= 0 else "red"
-    sign = "+" if data.get("change", 0) >= 0 else ""
+    # 判断涨跌颜色
+    change_str = data.get('change', '0')
+    if change_str.startswith('-'):
+        trend = "📉"
+        color = "red"
+    else:
+        trend = "📈"
+        color = "green"
     
-    message = {
+    # 构建富文本消息
+    card_message = {
         "msg_type": "interactive",
         "card": {
             "config": {"wide_screen_mode": True},
             "header": {
                 "title": {
                     "tag": "plain_text",
-                    "content": f"{trend} 黄金指数监控"
+                    "content": f"{trend} 沪金主连(AU0) 行情"
                 },
                 "template": color
             },
@@ -122,11 +176,71 @@ def send_index_to_feishu(data):
                     "tag": "div",
                     "text": {
                         "tag": "lark_md",
-                        "content": f"**📊 指数点位: {data['index']} 点**\n\n"
-                                  f"**📈 涨跌:** {sign}{data.get('change', 0)} ({sign}{data.get('change_percent', 0)}%)\n"
-                                  f"**⬆️ 最高:** {data.get('high', '--')} 点\n"
-                                  f"**⬇️ 最低:** {data.get('low', '--')} 点\n"
-                                  f"**📉 开盘:** {data.get('open', '--')} 点"
+                        "content": f"**💰 指数点位: {data.get('current_index', '--')} 点**\n"
+                                  f"**📈 涨跌: {data.get('change', '--')} ({data.get('change_percent', '--')})**\n"
+                                  f"🕐 {data.get('update_time', '--')}"
+                    }
+                },
+                {"tag": "hr"},
+                {
+                    "tag": "div",
+                    "fields": [
+                        {
+                            "is_short": True,
+                            "text": {
+                                "tag": "lark_md",
+                                "content": f"**最新价**\n{data.get('最新价', '--')}"
+                            }
+                        },
+                        {
+                            "is_short": True,
+                            "text": {
+                                "tag": "lark_md",
+                                "content": f"**开盘价**\n{data.get('开盘价', '--')}"
+                            }
+                        },
+                        {
+                            "is_short": True,
+                            "text": {
+                                "tag": "lark_md",
+                                "content": f"**最高价**\n{data.get('最高价', '--')}"
+                            }
+                        },
+                        {
+                            "is_short": True,
+                            "text": {
+                                "tag": "lark_md",
+                                "content": f"**最低价**\n{data.get('最低价', '--')}"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "tag": "div",
+                    "fields": [
+                        {
+                            "is_short": True,
+                            "text": {
+                                "tag": "lark_md",
+                                "content": f"**成交量**\n{data.get('成交量', '--')} 手"
+                            }
+                        },
+                        {
+                            "is_short": True,
+                            "text": {
+                                "tag": "lark_md",
+                                "content": f"**持仓量**\n{data.get('持仓量', '--')} 手"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "tag": "div",
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**💹 买卖盘**\n"
+                                  f"买 {data.get('买价', '--')} ({data.get('买量', '--')}手) | "
+                                  f"卖 {data.get('卖价', '--')} ({data.get('卖量', '--')}手)"
                     }
                 },
                 {
@@ -137,10 +251,9 @@ def send_index_to_feishu(data):
                     "elements": [
                         {
                             "tag": "plain_text",
-                            "content": f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
-                                      f"📌 基准: {data['base']}\n"
-                                      f"💡 {data['note']}\n"
-                                      f"🔗 新浪页面: https://finance.sina.com.cn/futures/quotes/AU0.shtml"
+                            "content": f"📌 数据来源: 新浪财经期货\n"
+                                      f"🔗 {data.get('url', 'https://finance.sina.com.cn/futures/quotes/AU0.shtml')}\n"
+                                      f"⚠️ 指数基准: 1000点（2019-12-31）"
                         }
                     ]
                 }
@@ -152,33 +265,34 @@ def send_index_to_feishu(data):
         response = requests.post(
             webhook_url,
             headers={"Content-Type": "application/json"},
-            json=message,
+            json=card_message,
             timeout=10
         )
-        return response.json().get("code") == 0
+        result = response.json()
+        return result.get("code") == 0
+        
     except Exception as e:
         print(f"发送失败: {e}")
         return False
 
 
 def main():
-    print("=" * 50)
-    print("🚀 黄金指数监控")
-    print("目标：获取指数点位（如1187.180）")
-    print("=" * 50)
+    print("🚀 开始抓取新浪期货 - 沪金主连(AU0) 数据...")
+    print(f"⏰ {datetime.now()}")
+    print("-" * 50)
     
-    data = get_gold_index()
+    data = get_sina_futures_au0()
+    
     if not data:
-        print("❌ 获取失败")
+        print("❌ 抓取失败")
         exit(1)
     
-    print(f"✅ 获取成功")
-    print(f"   指数: {data['index']} {data['unit']}")
-    if 'current_price' in data:
-        print(f"   对应金价: {data['current_price']} 元/克")
-    print(f"   基准: {data['base']}")
+    # 打印格式化数据
+    print(format_data(data))
     
-    if send_index_to_feishu(data):
+    # 发送到飞书
+    print("\n📤 发送到飞书...")
+    if send_to_feishu(data):
         print("✅ 发送成功")
     else:
         print("❌ 发送失败")
