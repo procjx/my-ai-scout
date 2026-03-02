@@ -193,6 +193,37 @@ def send_wechat(data):
     发送到企业微信机器人
     文档: https://developer.work.weixin.qq.com/document/path/91770
     """
+    def get_market_status():
+        """
+        判断当前市场状态
+        """
+        beijing_now = get_beijing_time()
+        current_time = beijing_now.time()
+        current_hour = current_time.hour
+        current_minute = current_time.minute
+        
+        # 判断是否在交易时间
+        is_trading = False
+        status = "已收盘"
+        
+        # 工作日判断（简化版，实际应排除节假日）
+        weekday = beijing_now.weekday()
+        if weekday < 5:  # 周一到周五
+            # 上午盘 9:00-11:30
+            if (9 <= current_hour < 11) or (current_hour == 11 and current_minute <= 30):
+                is_trading = True
+                status = "交易中(上午盘)"
+            # 下午盘 13:30-15:00
+            elif (13 <= current_hour < 15) or (current_hour == 15 and current_minute == 0):
+                is_trading = True
+                status = "交易中(下午盘)" if current_hour < 15 else "收盘"
+            # 夜盘 21:00-02:30
+            elif current_hour >= 21 or current_hour < 2 or (current_hour == 2 and current_minute <= 30):
+                is_trading = True
+                status = "交易中(夜盘)"
+        
+        return is_trading, status, beijing_now
+        
     def _build_message_content(data):
         """
         构建通用的消息内容
