@@ -226,35 +226,35 @@ def send_wechat(data):
 📌 数据来源: {content['source']}
 ⚠️ 仅供参考，投资有风险
 """
-        
+            
         # 如果涨跌幅度大，添加提醒
         if abs(data.get('涨跌幅', 0)) > 2:
-        markdown_content = f"## ⚠️ 波动提醒\n\n{markdown_content}"
+            markdown_content = f"## ⚠️ 波动提醒\n\n{markdown_content}"
         
         message = {
-        "msgtype": "markdown",
-        "markdown": {
-            "content": markdown_content
-        }
+            "msgtype": "markdown",
+            "markdown": {
+                "content": markdown_content
+            }
         }
         
         response = requests.post(
-        webhook_url,
-        headers={"Content-Type": "application/json"},
-        json=message,
-        timeout=10
+            webhook_url,
+            headers={"Content-Type": "application/json"},
+            json=message,
+            timeout=10
         )
         
         result = response.json()
         
         # 企业微信返回格式: {"errcode": 0, "errmsg": "ok"}
         if result.get("errcode") == 0:
-        print("✅ 企业微信发送成功")
-        return True
+            print("✅ 企业微信发送成功")
+            return True
         else:
-        print(f"❌ 企业微信返回错误: {result}")
-        return False
-        
+            print(f"❌ 企业微信返回错误: {result}")
+            return False
+            
     except Exception as e:
         print(f"❌ 企业微信发送异常: {e}")
         return False
