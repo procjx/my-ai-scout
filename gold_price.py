@@ -1,111 +1,115 @@
 #!/usr/bin/env python3
 """
 新浪期货API - 沪金主连(AU0) 数据获取
-使用新浪官方API，稳定可靠
+带详细调试信息
 """
 
 import os
+import sys
 import json
 import requests
+import traceback
 from datetime import datetime
 
 
 def get_sina_futures_api():
     """
-    使用新浪期货API获取数据（非页面抓取）
+    使用新浪期货API获取数据
     """
-    # 新浪期货行情API
-    # list参数：AU0 表示沪金主连
     url = "https://hq.sinajs.cn/list=AU0"
     
     headers = {
         "Referer": "https://finance.sina.com.cn",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "*/*",
+        "Accept-Language": "zh-CN,zh;q=0.9",
     }
     
     try:
-        response = requests.get(url, headers=headers, timeout=10)
-        response.encoding = 'gb2312'  # 新浪返回GB2312编码
+        print(f"🌐 请求URL: {url}")
+        response = requests.get(url, headers=headers, timeout=15)
         
-        # 返回格式: var hq_str_AU0="黄金连续,1150.160,1144.960,1187.180,1187.980,1148.620,1187.160,1187.180,273719,153924,1187.180,1,1187.180,2,1187.180,3,1187.180,4,1187.180,5,1187.180,6,1187.180,7,1187.180,8,1187.180,9,1187.180,10,1187.180,11,1187.180,12,1187.180,13,1187.180,14,1187.180,15,1187.180,16,1187.180,17,1187.180,18,1187.180,19,1187.180,20,1187.180,21,1187.180,22,1187.180,23,1187.180,24,1187.180,25,1187.180,26,1187.180,27,1187.180,28,1187.180,29,2026-03-02,11:30:00,00";
+        print(f"📊 状态码: {response.status_code}")
+        print(f"📋 编码: {response.encoding}")
+        print(f"📏 内容长度: {len(response.text)}")
         
-        text = response.text
+        # 尝试多种编码
+        for encoding in ['gb2312', 'gbk', 'utf-8']:
+            try:
+                response.encoding = encoding
+                text = response.text
+                print(f"\n🔤 尝试编码 {encoding}: {text[:100]}...")
+                break
+            except Exception as e:
+                print(f"   {encoding}失败: {e}")
+                continue
         
-        # 提取引号内的数据
+        # 检查返回内容
+        if not text or len(text) < 50:
+            print("❌ 返回内容太短:", repr(text))
+            return None
+        
+        # 提取数据
         if 'hq_str_AU0=' not in text:
-            print("API返回异常:", text[:200])
+            print("❌ 未找到 hq_str_AU0 标识")
+            print("返回内容:", text[:500])
             return None
         
-        data_str = text.split('"')[1]
+        # 提取引号内容
+        try:
+            data_str = text.split('"')[1]
+            print(f"✅ 提取数据字符串: {data_str[:100]}...")
+        except IndexError as e:
+            print(f"❌ 分割引号失败: {e}")
+            print("完整内容:", text)
+            return None
+        
         parts = data_str.split(',')
+        print(f"✅ 分割字段数: {len(parts)}")
         
-        if len(parts) < 30:
-            print("数据字段不足:", len(parts))
+        if len(parts) < 10:
+            print(f"❌ 字段数不足: {parts}")
             return None
         
-        # 解析字段（根据新浪期货数据格式）
-        # 参考: https://blog.csdn.net/afgasdg/article/details/8606484
+        # 打印前10个字段用于调试
+        print("\n📋 字段预览:")
+        for i, p in enumerate(parts[:10]):
+            print(f"   [{i}] {p}")
+        
+        # 解析数据
         data = {
-            'name': parts[0],                    # 黄金连续
-            '开盘价': float(parts[1]),            # 1150.160
-            '昨结算': float(parts[2]),            # 1144.960（昨结算价）
-            '最新价': float(parts[3]),            # 1187.180（当前指数）
-            '最高价': float(parts[4]),            # 1187.980
-            '最低价': float(parts[5]),            # 1148.620
-            '买价': float(parts[6]),              # 1187.160
-            '卖价': float(parts[7]),              # 1187.180
-            '成交量': int(parts[8]),              # 273719（手）
-            '持仓量': int(parts[9]),              # 153924（手）
-            '更新时间': f"{parts[-3]} {parts[-2]}",  # 2026-03-02 11:30:00
+            'name': parts[0],
+            '开盘价': float(parts[1]) if parts[1].replace('.','').isdigit() else 0,
+            '昨结算': float(parts[2]) if parts[2].replace('.','').isdigit() else 0,
+            '最新价': float(parts[3]) if parts[3].replace('.','').isdigit() else 0,
+            '最高价': float(parts[4]) if parts[4].replace('.','').isdigit() else 0,
+            '最低价': float(parts[5]) if parts[5].replace('.','').isdigit() else 0,
+            '买价': float(parts[6]) if parts[6].replace('.','').isdigit() else 0,
+            '卖价': float(parts[7]) if parts[7].replace('.','').isdigit() else 0,
+            '成交量': int(parts[8]) if parts[8].isdigit() else 0,
+            '持仓量': int(parts[9]) if parts[9].isdigit() else 0,
         }
         
-        # 计算涨跌（最新价 - 昨结算）
-        data['涨跌'] = round(data['最新价'] - data['昨结算'], 3)
-        data['涨跌幅'] = round((data['涨跌'] / data['昨结算']) * 100, 2)
+        # 时间通常在最后
+        if len(parts) >= 3:
+            data['更新时间'] = f"{parts[-3]} {parts[-2]}" if len(parts) >= 2 else "未知"
+        else:
+            data['更新时间'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
-        # 买卖量（在parts[10]开始，每4个一组：买价,买量,卖价,卖量）
-        if len(parts) > 11:
-            data['买量'] = int(parts[11]) if parts[11].isdigit() else 0
-            data['卖量'] = int(parts[13]) if len(parts) > 13 and parts[13].isdigit() else 0
+        # 计算涨跌
+        data['涨跌'] = round(data['最新价'] - data['昨结算'], 3)
+        data['涨跌幅'] = round((data['涨跌'] / data['昨结算']) * 100, 2) if data['昨结算'] > 0 else 0
+        
+        print(f"\n✅ 解析成功:")
+        print(f"   名称: {data['name']}")
+        print(f"   最新价: {data['最新价']}")
+        print(f"   涨跌: {data['涨跌']}")
         
         return data
         
     except Exception as e:
-        print(f"API请求失败: {e}")
-        return None
-
-
-def get_sina_futures_detail():
-    """
-    获取更详细的期货数据（使用另一个API）
-    """
-    try:
-        # 新浪期货详情API
-        url = "https://stock.finance.sina.com.cn/futures/api/json.php/Cffex_FuturesService.getCffexFuturesDailyKLine?symbol=AU0"
-        
-        headers = {
-            "User-Agent": "Mozilla/5.0",
-            "Referer": "https://finance.sina.com.cn"
-        }
-        
-        response = requests.get(url, headers=headers, timeout=10)
-        
-        # 这个API返回K线数据，我们取最新一天
-        kline_data = response.json()
-        
-        if kline_data and len(kline_data) > 0:
-            latest = kline_data[-1]
-            return {
-                'date': latest.get('date'),
-                'open': float(latest.get('open', 0)),
-                'high': float(latest.get('high', 0)),
-                'low': float(latest.get('low', 0)),
-                'close': float(latest.get('close', 0)),  # 收盘价即最新指数
-                'volume': int(latest.get('volume', 0)),
-            }
-            
-    except Exception as e:
-        print(f"K线API失败: {e}")
+        print(f"❌ 异常: {e}")
+        print(f"📜 堆栈: {traceback.format_exc()}")
         return None
 
 
@@ -114,169 +118,173 @@ def send_to_feishu(data):
     发送数据到飞书
     """
     webhook_url = os.environ.get("FEISHU_WEBHOOK_URL")
+    
+    print(f"\n📤 准备发送飞书...")
+    print(f"   Webhook存在: {'是' if webhook_url else '否'}")
+    
     if not webhook_url:
-        print("错误: 未设置 FEISHU_WEBHOOK_URL")
+        print("❌ 错误: 未设置 FEISHU_WEBHOOK_URL 环境变量")
         return False
     
-    # 判断涨跌
-    change = data.get('涨跌', 0)
-    trend = "📈" if change >= 0 else "📉"
-    color = "green" if change >= 0 else "red"
-    sign = "+" if change >= 0 else ""
-    
-    card_message = {
-        "msg_type": "interactive",
-        "card": {
-            "config": {"wide_screen_mode": True},
-            "header": {
-                "title": {
-                    "tag": "plain_text",
-                    "content": f"{trend} 沪金主连(AU0) 行情"
-                },
-                "template": color
-            },
-            "elements": [
-                {
-                    "tag": "div",
-                    "text": {
-                        "tag": "lark_md",
-                        "content": f"**💰 最新指数: {data['最新价']} 点**\n"
-                                  f"**📈 涨跌: {sign}{data['涨跌']} ({sign}{data['涨跌幅']}%)**\n"
-                                  f"🕐 {data['更新时间']}"
-                    }
-                },
-                {"tag": "hr"},
-                {
-                    "tag": "div",
-                    "fields": [
-                        {
-                            "is_short": True,
-                            "text": {
-                                "tag": "lark_md",
-                                "content": f"**开盘价**\n{data['开盘价']}"
-                            }
-                        },
-                        {
-                            "is_short": True,
-                            "text": {
-                                "tag": "lark_md",
-                                "content": f"**昨结算**\n{data['昨结算']}"
-                            }
-                        },
-                        {
-                            "is_short": True,
-                            "text": {
-                                "tag": "lark_md",
-                                "content": f"**最高价**\n{data['最高价']}"
-                            }
-                        },
-                        {
-                            "is_short": True,
-                            "text": {
-                                "tag": "lark_md",
-                                "content": f"**最低价**\n{data['最低价']}"
-                            }
-                        }
-                    ]
-                },
-                {
-                    "tag": "div",
-                    "fields": [
-                        {
-                            "is_short": True,
-                            "text": {
-                                "tag": "lark_md",
-                                "content": f"**成交量**\n{data['成交量']:,} 手"
-                            }
-                        },
-                        {
-                            "is_short": True,
-                            "text": {
-                                "tag": "lark_md",
-                                "content": f"**持仓量**\n{data['持仓量']:,} 手"
-                            }
-                        }
-                    ]
-                },
-                {
-                    "tag": "div",
-                    "text": {
-                        "tag": "lark_md",
-                        "content": f"**💹 买卖盘**\n"
-                                  f"买 {data.get('买价', '--')} ({data.get('买量', '--')}手) | "
-                                  f"卖 {data.get('卖价', '--')} ({data.get('卖量', '--')}手)"
-                    }
-                },
-                {
-                    "tag": "hr"
-                },
-                {
-                    "tag": "note",
-                    "elements": [
-                        {
-                            "tag": "plain_text",
-                            "content": f"📌 数据来源: 新浪财经API\n"
-                                      f"⚠️ 指数基准: 1000点（2019-12-31）\n"
-                                      f"🔗 https://finance.sina.com.cn/futures/quotes/AU0.shtml"
-                        }
-                    ]
-                }
-            ]
-        }
-    }
+    # 隐藏部分URL用于安全显示
+    safe_url = webhook_url[:50] + "..." if len(webhook_url) > 50 else webhook_url
+    print(f"   URL: {safe_url}")
     
     try:
+        change = data.get('涨跌', 0)
+        trend = "📈" if change >= 0 else "📉"
+        color = "green" if change >= 0 else "red"
+        sign = "+" if change >= 0 else ""
+        
+        card_message = {
+            "msg_type": "interactive",
+            "card": {
+                "config": {"wide_screen_mode": True},
+                "header": {
+                    "title": {
+                        "tag": "plain_text",
+                        "content": f"{trend} 沪金主连(AU0) 行情"
+                    },
+                    "template": color
+                },
+                "elements": [
+                    {
+                        "tag": "div",
+                        "text": {
+                            "tag": "lark_md",
+                            "content": f"**💰 最新指数: {data.get('最新价', '--')} 点**\n"
+                                      f"**📈 涨跌: {sign}{data.get('涨跌', '--')} ({sign}{data.get('涨跌幅', '--')}%)**\n"
+                                      f"🕐 {data.get('更新时间', '--')}"
+                        }
+                    },
+                    {"tag": "hr"},
+                    {
+                        "tag": "div",
+                        "fields": [
+                            {
+                                "is_short": True,
+                                "text": {
+                                    "tag": "lark_md",
+                                    "content": f"**开盘价**\n{data.get('开盘价', '--')}"
+                                }
+                            },
+                            {
+                                "is_short": True,
+                                "text": {
+                                    "tag": "lark_md",
+                                    "content": f"**昨结算**\n{data.get('昨结算', '--')}"
+                                }
+                            },
+                            {
+                                "is_short": True,
+                                "text": {
+                                    "tag": "lark_md",
+                                    "content": f"**最高价**\n{data.get('最高价', '--')}"
+                                }
+                            },
+                            {
+                                "is_short": True,
+                                "text": {
+                                    "tag": "lark_md",
+                                    "content": f"**最低价**\n{data.get('最低价', '--')}"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "tag": "div",
+                        "fields": [
+                            {
+                                "is_short": True,
+                                "text": {
+                                    "tag": "lark_md",
+                                    "content": f"**成交量**\n{data.get('成交量', '--'):,} 手"
+                                }
+                            },
+                            {
+                                "is_short": True,
+                                "text": {
+                                    "tag": "lark_md",
+                                    "content": f"**持仓量**\n{data.get('持仓量', '--'):,} 手"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "tag": "hr"
+                    },
+                    {
+                        "tag": "note",
+                        "elements": [
+                            {
+                                "tag": "plain_text",
+                                "content": f"📌 数据来源: 新浪财经API\n"
+                                          f"⚠️ 指数基准: 1000点（2019-12-31）"
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+        
+        print(f"   发送请求...")
         response = requests.post(
             webhook_url,
             headers={"Content-Type": "application/json"},
             json=card_message,
             timeout=10
         )
+        
+        print(f"   状态码: {response.status_code}")
+        print(f"   返回: {response.text[:200]}")
+        
         result = response.json()
         
         if result.get("code") == 0:
-            print("✅ 发送成功")
+            print("✅ 飞书发送成功")
             return True
         else:
-            print(f"❌ 发送失败: {result}")
+            print(f"❌ 飞书返回错误: {result}")
             return False
             
     except Exception as e:
-        print(f"❌ 请求异常: {e}")
+        print(f"❌ 发送异常: {e}")
+        print(f"📜 堆栈: {traceback.format_exc()}")
         return False
 
 
 def main():
     print("=" * 60)
-    print("🚀 新浪期货API - 沪金主连(AU0) 数据获取")
+    print("🚀 新浪期货API - 调试模式")
     print(f"⏰ {datetime.now()}")
+    print(f"🐍 Python: {sys.version}")
     print("=" * 60)
     
-    # 获取实时数据
-    print("\n📡 正在获取实时数据...")
+    # 获取数据
+    print("\n" + "="*60)
+    print("📡 步骤1: 获取数据")
+    print("="*60)
+    
     data = get_sina_futures_api()
     
     if not data:
-        print("❌ 获取失败，尝试备用API...")
-        # 可以尝试其他API或退出
-        exit(1)
+        print("\n❌ 获取数据失败，退出")
+        sys.exit(1)
     
-    # 打印数据
-    print(f"\n✅ 获取成功!")
-    print(f"📊 品种: {data['name']}")
-    print(f"💰 最新指数: {data['最新价']} 点")
-    print(f"📈 涨跌: {data['涨跌']} ({data['涨跌幅']}%)")
-    print(f"⬆️ 最高: {data['最高价']}  ⬇️ 最低: {data['最低价']}")
-    print(f"📊 成交: {data['成交量']:,}手  持仓: {data['持仓量']:,}手")
-    print(f"🕐 时间: {data['更新时间']}")
+    # 发送飞书
+    print("\n" + "="*60)
+    print("📤 步骤2: 发送飞书")
+    print("="*60)
     
-    # 发送到飞书
-    print(f"\n📤 正在发送到飞书...")
-    if send_to_feishu(data):
-        print("✅ 任务完成")
-    else:
-        print("❌ 任务失败")
-        exit(1)
+    success = send_to_feishu(data)
+    
+    if not success:
+        print("\n❌ 发送失败，退出")
+        sys.exit(1)
+    
+    print("\n" + "="*60)
+    print("✅ 全部完成")
+    print("="*60)
 
 
 if __name__ == "__main__":
