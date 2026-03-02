@@ -1,0 +1,43 @@
+name: 黄金价格监控
+
+on:
+  schedule:
+    # 每小时运行一次 (UTC时间，北京时间+8)
+    # 工作日上午9点到下午6点（北京时间）每小时运行
+    - cron: '0 1-10 * * 1-5'  # 周一到周五 UTC 1:00-10:00 (北京时间 9:00-18:00)
+  
+  # 允许手动触发
+  workflow_dispatch:
+
+jobs:
+  send-gold-price:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+      
+    - name: 设置 Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+        
+    - name: 安装依赖
+      run: |
+        pip install -r requirements.txt
+        
+    - name: 运行价格监控
+      env:
+        FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+      run: |
+        python gold_price.py
+        
+    - name: 任务完成通知（仅失败时）
+      if: failure()
+      env:
+        FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+      run: |
+        curl -X POST -H "Content-Type: application/json" \
+          -d '{"msg_type":"text","content":{"text":"❌ 黄金价格监控任务失败，请检查GitHub Actions日志"}}' \
+          ${{ secrets.FEISHU_WEBHOOK_URL }}
