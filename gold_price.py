@@ -188,26 +188,26 @@ def get_gold_data():
         
     return data
 
-def send_wechat(self, data):
-        """
-        发送到企业微信机器人
-        文档: https://developer.work.weixin.qq.com/document/path/91770
-        """
-        print("\n📤 发送到企业微信...")
+def send_wechat(data):
+    """
+    发送到企业微信机器人
+    文档: https://developer.work.weixin.qq.com/document/path/91770
+    """
+    print("\n📤 发送到企业微信...")
+    
+    webhook_url = os.environ.get("WECHAT_WEBHOOK_URL")
+    if not webhook_url:
+        print("❌ 未配置 WECHAT_WEBHOOK_URL")
+        return False
+    
+    try:
+        content, trend, sign, is_trading = self._build_message_content(data)
+        change = data.get('涨跌额', 0)
         
-        webhook_url = os.environ.get("WECHAT_WEBHOOK_URL")
-        if not webhook_url:
-            print("❌ 未配置 WECHAT_WEBHOOK_URL")
-            return False
+        # 企业微信支持多种消息类型：text, markdown, image, news等
+        # 这里使用 markdown 类型，格式丰富且手机端显示友好
         
-        try:
-            content, trend, sign, is_trading = self._build_message_content(data)
-            change = data.get('涨跌额', 0)
-            
-            # 企业微信支持多种消息类型：text, markdown, image, news等
-            # 这里使用 markdown 类型，格式丰富且手机端显示友好
-            
-            markdown_content = f"""## {content['title']}
+        markdown_content = f"""## {content['title']}
 
 > 💰 **最新价格**: {content['price']}
 > 📈 **涨跌**: {content['change']}
@@ -226,38 +226,38 @@ def send_wechat(self, data):
 📌 数据来源: {content['source']}
 ⚠️ 仅供参考，投资有风险
 """
-            
-            # 如果涨跌幅度大，添加提醒
-            if abs(data.get('涨跌幅', 0)) > 2:
-                markdown_content = f"## ⚠️ 波动提醒\n\n{markdown_content}"
-            
-            message = {
-                "msgtype": "markdown",
-                "markdown": {
-                    "content": markdown_content
-                }
-            }
-            
-            response = requests.post(
-                webhook_url,
-                headers={"Content-Type": "application/json"},
-                json=message,
-                timeout=10
-            )
-            
-            result = response.json()
-            
-            # 企业微信返回格式: {"errcode": 0, "errmsg": "ok"}
-            if result.get("errcode") == 0:
-                print("✅ 企业微信发送成功")
-                return True
-            else:
-                print(f"❌ 企业微信返回错误: {result}")
-                return False
-                
-        except Exception as e:
-            print(f"❌ 企业微信发送异常: {e}")
-            return False
+        
+        # 如果涨跌幅度大，添加提醒
+        if abs(data.get('涨跌幅', 0)) > 2:
+        markdown_content = f"## ⚠️ 波动提醒\n\n{markdown_content}"
+        
+        message = {
+        "msgtype": "markdown",
+        "markdown": {
+            "content": markdown_content
+        }
+        }
+        
+        response = requests.post(
+        webhook_url,
+        headers={"Content-Type": "application/json"},
+        json=message,
+        timeout=10
+        )
+        
+        result = response.json()
+        
+        # 企业微信返回格式: {"errcode": 0, "errmsg": "ok"}
+        if result.get("errcode") == 0:
+        print("✅ 企业微信发送成功")
+        return True
+        else:
+        print(f"❌ 企业微信返回错误: {result}")
+        return False
+        
+    except Exception as e:
+        print(f"❌ 企业微信发送异常: {e}")
+        return False
 
 def send_to_feishu(data):
     """
