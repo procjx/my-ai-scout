@@ -193,6 +193,39 @@ def send_wechat(data):
     发送到企业微信机器人
     文档: https://developer.work.weixin.qq.com/document/path/91770
     """
+    def _build_message_content(data):
+        """
+        构建通用的消息内容
+        """
+        is_trading, market_status, _ = get_market_status()
+        
+        change = data.get('涨跌额', 0)
+        trend = "📈" if change >= 0 else "📉"
+        sign = "+" if change >= 0 else ""
+        
+        is_realtime = '实时' in str(data.get('数据来源', ''))
+        source_tag = "🔴 实时" if is_realtime else "🟡 收盘"
+        
+        update_time_str = data.get('完整时间', data.get('更新时间', '--'))
+        if not is_trading and "15:00" in str(update_time_str):
+            update_time_str = f"{update_time_str} (已收盘)"
+        
+        content = {
+            'title': f"{trend} {data.get('name', '沪金')} {source_tag}",
+            'price': f"{data.get('最新价', '--')} 元/克",
+            'change': f"{sign}{data.get('涨跌额', '--')} ({sign}{data.get('涨跌幅', '--')}%)",
+            'time': update_time_str,
+            'market_status': market_status,
+            'open': data.get('开盘价', '--'),
+            'high': data.get('最高价', '--'),
+            'low': data.get('最低价', '--'),
+            'volume': f"{data.get('成交量', 0):,} 手",
+            'position': f"{data.get('持仓量', 0):,} 手",
+            'source': data.get('数据来源', 'AkShare'),
+        }
+        
+        return content, trend, sign, is_trading
+        
     print("\n📤 发送到企业微信...")
     
     webhook_url = os.environ.get("WECHAT_WEBHOOK_URL")
