@@ -234,7 +234,7 @@ def send_wechat(data):
         return False
     
     try:
-        content, trend, sign, is_trading = self._build_message_content(data)
+        content, trend, sign, is_trading = _build_message_content(data)
         change = data.get('涨跌额', 0)
         
         # 企业微信支持多种消息类型：text, markdown, image, news等
