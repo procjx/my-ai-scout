@@ -437,7 +437,6 @@ def main():
     print("\n" + "="*60)
     print("✅ 全部完成")
     print("="*60)
-https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=59f43ddf-11ac-4ea8-8f00-2e8bf7737226
 
 if __name__ == "__main__":
     main()
