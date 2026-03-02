@@ -30,6 +30,7 @@ jobs:
     - name: 运行价格监控
       env:
         FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+        WECHAT_WEBHOOK_URL: ${{ secrets.WECHAT_WEBHOOK_URL }}
       run: |
         python gold_price.py
         
