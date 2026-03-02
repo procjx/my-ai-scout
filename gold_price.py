@@ -188,6 +188,76 @@ def get_gold_data():
         
     return data
 
+def send_wechat(self, data):
+        """
+        发送到企业微信机器人
+        文档: https://developer.work.weixin.qq.com/document/path/91770
+        """
+        print("\n📤 发送到企业微信...")
+        
+        webhook_url = os.environ.get("WECHAT_WEBHOOK_URL")
+        if not webhook_url:
+            print("❌ 未配置 WECHAT_WEBHOOK_URL")
+            return False
+        
+        try:
+            content, trend, sign, is_trading = self._build_message_content(data)
+            change = data.get('涨跌额', 0)
+            
+            # 企业微信支持多种消息类型：text, markdown, image, news等
+            # 这里使用 markdown 类型，格式丰富且手机端显示友好
+            
+            markdown_content = f"""## {content['title']}
+
+> 💰 **最新价格**: {content['price']}
+> 📈 **涨跌**: {content['change']}
+> 🕐 **时间**: {content['time']}
+> 📊 **市场状态**: {content['market_status']}
+
+**详细数据**:
+- 开盘价: {content['open']}
+- 最高价: {content['high']}
+- 最低价: {content['low']}
+- 昨结算: {data.get('昨结算', '--')}
+- 成交量: {content['volume']}
+- 持仓量: {content['position']}
+
+---
+📌 数据来源: {content['source']}
+⚠️ 仅供参考，投资有风险
+"""
+            
+            # 如果涨跌幅度大，添加提醒
+            if abs(data.get('涨跌幅', 0)) > 2:
+                markdown_content = f"## ⚠️ 波动提醒\n\n{markdown_content}"
+            
+            message = {
+                "msgtype": "markdown",
+                "markdown": {
+                    "content": markdown_content
+                }
+            }
+            
+            response = requests.post(
+                webhook_url,
+                headers={"Content-Type": "application/json"},
+                json=message,
+                timeout=10
+            )
+            
+            result = response.json()
+            
+            # 企业微信返回格式: {"errcode": 0, "errmsg": "ok"}
+            if result.get("errcode") == 0:
+                print("✅ 企业微信发送成功")
+                return True
+            else:
+                print(f"❌ 企业微信返回错误: {result}")
+                return False
+                
+        except Exception as e:
+            print(f"❌ 企业微信发送异常: {e}")
+            return False
 
 def send_to_feishu(data):
     """
@@ -356,6 +426,9 @@ def main():
     print("="*60)
     
     success = send_to_feishu(data)
+
+    # 发送企业微信
+    send_wechat(data)
     
     if not success:
         print("\n❌ 发送失败，退出")
@@ -364,7 +437,7 @@ def main():
     print("\n" + "="*60)
     print("✅ 全部完成")
     print("="*60)
-
+https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=59f43ddf-11ac-4ea8-8f00-2e8bf7737226
 
 if __name__ == "__main__":
     main()
