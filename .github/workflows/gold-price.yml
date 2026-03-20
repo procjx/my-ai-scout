@@ -29,7 +29,7 @@ jobs:
         
     - name: 运行价格监控
       env:
-        FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+        FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_GOLD_WEBHOOK_URL }}
         WECHAT_WEBHOOK_URL: ${{ secrets.WECHAT_WEBHOOK_URL }}
       run: |
         python gold_price.py
@@ -37,7 +37,7 @@ jobs:
     - name: 任务完成通知（仅失败时）
       if: failure()
       env:
-        FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+        FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_GOLD_WEBHOOK_URL }}
       run: |
         curl -X POST -H "Content-Type: application/json" \
           -d '{"msg_type":"text","content":{"text":"❌ 黄金价格监控任务失败，请检查GitHub Actions日志"}}' \
